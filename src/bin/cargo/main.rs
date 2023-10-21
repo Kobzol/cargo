@@ -20,6 +20,8 @@ mod commands;
 use crate::command_prelude::*;
 
 fn main() {
+    std::env::set_var("MALLOC_CONF", "thp:always,metadata_thp:always");
+
     setup_logger();
 
     let mut config = cli::LazyConfig::new();
@@ -77,13 +79,7 @@ fn builtin_aliases_execs(cmd: &str) -> Option<&(&str, &str, &str)> {
 fn aliased_command(config: &Config, command: &str) -> CargoResult<Option<Vec<String>>> {
     let alias_name = format!("alias.{}", command);
     let user_alias = match config.get_string(&alias_name) {
-        Ok(Some(record)) => Some(
-            record
-                .val
-                .split_whitespace()
-                .map(|s| s.to_string())
-                .collect(),
-        ),
+        Ok(Some(record)) => Some(record.val.split_whitespace().map(|s| s.to_string()).collect()),
         Ok(None) => None,
         Err(_) => config.get::<Option<Vec<String>>>(&alias_name)?,
     };
@@ -109,17 +105,12 @@ fn list_commands(config: &Config) -> BTreeMap<String, CommandInfo> {
             let Some(filename) = path.file_name().and_then(|s| s.to_str()) else {
                 continue;
             };
-            let Some(name) = filename
-                .strip_prefix(prefix)
-                .and_then(|s| s.strip_suffix(suffix))
+            let Some(name) = filename.strip_prefix(prefix).and_then(|s| s.strip_suffix(suffix))
             else {
                 continue;
             };
             if is_executable(entry.path()) {
-                commands.insert(
-                    name.to_string(),
-                    CommandInfo::External { path: path.clone() },
-                );
+                commands.insert(name.to_string(), CommandInfo::External { path: path.clone() });
             }
         }
     }
@@ -127,9 +118,7 @@ fn list_commands(config: &Config) -> BTreeMap<String, CommandInfo> {
     for cmd in commands::builtin() {
         commands.insert(
             cmd.get_name().to_string(),
-            CommandInfo::BuiltIn {
-                about: cmd.get_about().map(|s| s.to_string()),
-            },
+            CommandInfo::BuiltIn { about: cmd.get_about().map(|s| s.to_string()) },
         );
     }
 
@@ -138,30 +127,21 @@ fn list_commands(config: &Config) -> BTreeMap<String, CommandInfo> {
     for command in &BUILTIN_ALIASES {
         commands.insert(
             command.0.to_string(),
-            CommandInfo::BuiltIn {
-                about: Some(command.2.to_string()),
-            },
+            CommandInfo::BuiltIn { about: Some(command.2.to_string()) },
         );
     }
 
     // Add the user-defined aliases
     if let Ok(aliases) = config.get::<BTreeMap<String, StringOrVec>>("alias") {
         for (name, target) in aliases.iter() {
-            commands.insert(
-                name.to_string(),
-                CommandInfo::Alias {
-                    target: target.clone(),
-                },
-            );
+            commands.insert(name.to_string(), CommandInfo::Alias { target: target.clone() });
         }
     }
 
     // `help` is special, so it needs to be inserted separately.
     commands.insert(
         "help".to_string(),
-        CommandInfo::BuiltIn {
-            about: Some("Displays help for a cargo subcommand".to_string()),
-        },
+        CommandInfo::BuiltIn { about: Some("Displays help for a cargo subcommand".to_string()) },
     );
 
     commands
