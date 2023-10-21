@@ -20,7 +20,7 @@ mod commands;
 use crate::command_prelude::*;
 
 fn main() {
-    std::env::set_var("MALLOC_CONF", "thp:always,metadata_thp:always");
+    std::env::set_var("MALLOC_CONF", "thp:always");
 
     setup_logger();
 
