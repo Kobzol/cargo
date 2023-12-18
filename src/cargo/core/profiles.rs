@@ -716,6 +716,7 @@ impl Profile {
             root: ProfileRoot::Release,
             opt_level: InternedString::new("3"),
             trim_paths,
+            strip: Strip::Named(InternedString::new("debuginfo")),
             ..Profile::default()
         }
     }
