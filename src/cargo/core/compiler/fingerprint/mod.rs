@@ -1487,7 +1487,7 @@ fn calculate_normal(
         let dep_info = dep_info.strip_prefix(&target_root).unwrap().to_path_buf();
         vec![LocalFingerprint::CheckDepInfo {
             dep_info,
-            checksum: build_runner.bcx.gctx.cli_unstable().checksum_freshness,
+            checksum: true, //build_runner.bcx.gctx.cli_unstable().checksum_freshness,
         }]
     };
 
