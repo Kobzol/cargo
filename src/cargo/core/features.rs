@@ -1200,6 +1200,8 @@ impl CliUnstable {
             self.add(flag, &mut warnings)?;
         }
 
+        self.no_embed_metadata = true;
+
         if self.gitoxide.is_none() && cargo_use_gitoxide_instead_of_git2() {
             self.gitoxide = GitoxideFeatures::safe().into();
         }
