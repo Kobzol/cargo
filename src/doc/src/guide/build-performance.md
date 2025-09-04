@@ -26,23 +26,16 @@ inherits = "dev"
 debug = true
 ```
 
+This will:
+- Change the [`dev` profile](../reference/profiles.md#dev) (default for development commands) to
+  - Limit debug information ([`debug`](../reference/profiles.md#debug)) to whats needed for panics for workspace members
+  - Remove all debug information for dependencies
+- Provide an opt-in for when debugging via [`--profile debugging`](../reference/profiles.md#custom-profiles)
+
 Trade offs:
 - ✅ Faster per-crate build times
 - ✅ Faster link times
 - ❌ Requires full rebuild to have a high quality debugger experience
-
-By default, the `dev` [profile](../reference/profiles.md)
-enables generation of full debug information ([`debug`](../reference/profiles.md#debug))
-both for local crates and also for all dependencies.
-This is useful if you want to debug your code with a debugger,
-but it can also have a significant compilation and link time cost.
-
-Our recommendation:
-- Limits debug information to whats needed for panics for workspace members
-- Removes all debug information for dependencies
-- Has an opt-in for when debugging via [`--profile debugging`](../reference/profiles.md#custom-profiles)
-- Having this in your `Cargo.toml` will help all your contributors and CI
-- Having this in your `$CARGO_HOME/.cargo/config.toml` will help you as you contribute to projects that decide not to set this
 
 Feel free to adapt this to meet your needs.
 
