@@ -1245,6 +1245,7 @@ impl CliUnstable {
         flags: &[String],
         nightly_features_allowed: bool,
     ) -> CargoResult<Vec<String>> {
+        self.build_dir_new_layout = true;
         if !flags.is_empty() && !nightly_features_allowed {
             bail!(
                 "the `-Z` flag is only accepted on the nightly channel of Cargo, \
@@ -1271,6 +1272,7 @@ impl CliUnstable {
         }
 
         self.implicitly_enable_features_if_needed();
+        self.build_dir_new_layout = true;
 
         Ok(warnings)
     }

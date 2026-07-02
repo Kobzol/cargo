@@ -371,7 +371,7 @@ impl GlobalContext {
             Err(_) => jiff::Timestamp::now(),
         };
 
-        GlobalContext {
+        let mut ctx = GlobalContext {
             home_path: Filesystem::new(homedir),
             shell: Mutex::new(shell),
             cwd,
@@ -412,7 +412,9 @@ impl GlobalContext {
             ws_roots: Default::default(),
             global_cache_tracker: Default::default(),
             deferred_global_last_use: Default::default(),
-        }
+        };
+        ctx.unstable_flags.build_dir_new_layout = true;
+        ctx
     }
 
     /// Creates a new instance, with all default settings.
@@ -1164,6 +1166,8 @@ impl GlobalContext {
         unstable_flags: &[String],
         cli_config: &[String],
     ) -> CargoResult<()> {
+        eprintln!("SETTING BUILD DIR LAYOUT TO TRUE");
+        self.unstable_flags.build_dir_new_layout = true;
         for warning in self
             .unstable_flags
             .parse(unstable_flags, self.nightly_features_allowed)?
@@ -1230,6 +1234,7 @@ impl GlobalContext {
 
         self.shell()
             .set_unstable_flags_rustc_unicode(self.unstable_flags.rustc_unicode)?;
+        self.unstable_flags.build_dir_new_layout = true;
 
         Ok(())
     }
@@ -1241,6 +1246,7 @@ impl GlobalContext {
             self.unstable_flags = self
                 .get::<Option<CliUnstable>>("unstable")?
                 .unwrap_or_default();
+            self.unstable_flags.build_dir_new_layout = true;
             if let Some(unstable_flags_cli) = &self.unstable_flags_cli {
                 // NB. It's not ideal to parse these twice, but doing it again here
                 //     allows the CLI to override config files for both enabling
