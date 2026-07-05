@@ -23,6 +23,7 @@ use gix::bstr::{BString, ByteVec};
 use gix::dir::entry::Status;
 use gix::index::entry::Stage;
 use ignore::gitignore::GitignoreBuilder;
+use std::sync::Mutex;
 use tracing::{debug, info, trace, warn};
 use walkdir::WalkDir;
 
@@ -37,7 +38,7 @@ pub struct PathSource<'gctx> {
     /// The root path of this source.
     path: PathBuf,
     /// Packages that this sources has discovered.
-    package: RefCell<Option<Package>>,
+    pub package: Mutex<Option<Package>>,
     gctx: &'gctx GlobalContext,
 }
 
@@ -50,7 +51,7 @@ impl<'gctx> PathSource<'gctx> {
         Self {
             source_id,
             path: path.to_path_buf(),
-            package: RefCell::new(None),
+            package: Mutex::new(None),
             gctx,
         }
     }
@@ -63,7 +64,7 @@ impl<'gctx> PathSource<'gctx> {
         Self {
             source_id,
             path,
-            package: RefCell::new(Some(pkg)),
+            package: Mutex::new(Some(pkg)),
             gctx,
         }
     }
@@ -74,7 +75,7 @@ impl<'gctx> PathSource<'gctx> {
 
         self.load()?;
 
-        match &*self.package.borrow() {
+        match &*self.package.lock().unwrap() {
             Some(pkg) => Ok(pkg.clone()),
             None => Err(internal(format!(
                 "no package found in source {:?}",
@@ -100,7 +101,7 @@ impl<'gctx> PathSource<'gctx> {
 
     /// Gets the last modified file in a package.
     fn last_modified_file(&self, pkg: &Package) -> CargoResult<(FileTime, PathBuf)> {
-        if self.package.borrow().is_none() {
+        if self.package.lock().unwrap().is_none() {
             return Err(internal(format!(
                 "BUG: source `{:?}` was not loaded",
                 self.path
@@ -116,7 +117,7 @@ impl<'gctx> PathSource<'gctx> {
 
     /// Discovers packages inside this source if it hasn't yet done.
     pub fn load(&self) -> CargoResult<()> {
-        let mut package = self.package.borrow_mut();
+        let mut package = self.package.lock().unwrap();
         if package.is_none() {
             *package = Some(self.read_package()?);
         }
@@ -146,7 +147,7 @@ impl<'gctx> Source for PathSource<'gctx> {
         f: &mut dyn FnMut(IndexSummary),
     ) -> CargoResult<()> {
         self.load()?;
-        if let Some(s) = self.package.borrow().as_ref().map(|p| p.summary()) {
+        if let Some(s) = self.package.lock().unwrap().as_ref().map(|p| p.summary()) {
             let matched = match kind {
                 QueryKind::Exact | QueryKind::RejectedVersions => dep.matches(s),
                 QueryKind::AlternativeNames => true,
@@ -174,7 +175,7 @@ impl<'gctx> Source for PathSource<'gctx> {
     async fn download(&self, id: PackageId) -> CargoResult<MaybePackage> {
         trace!("getting packages; id={}", id);
         self.load()?;
-        let pkg = self.package.borrow();
+        let pkg = self.package.lock().unwrap();
         let pkg = pkg.iter().find(|pkg| pkg.package_id() == id);
         pkg.cloned()
             .map(MaybePackage::Ready)

@@ -65,20 +65,19 @@
 //! [`IndexSummary::parse`]: super::IndexSummary::parse
 //! [`RemoteRegistry`]: crate::sources::registry::remote::RemoteRegistry
 
+use crate::CargoResult;
+use crate::GlobalContext;
+use crate::util::Filesystem;
+use crate::util::cache_lock::CacheLockMode;
+use anyhow::bail;
+use cargo_util::registry::make_dep_path;
+use semver::Version;
 use std::cell::RefCell;
 use std::fs;
 use std::io;
 use std::path::PathBuf;
 use std::str;
-
-use anyhow::bail;
-use cargo_util::registry::make_dep_path;
-use semver::Version;
-
-use crate::CargoResult;
-use crate::GlobalContext;
-use crate::util::Filesystem;
-use crate::util::cache_lock::CacheLockMode;
+use std::sync::Mutex;
 
 use super::INDEX_V_MAX;
 use super::split;
@@ -229,7 +228,7 @@ pub struct CacheManager<'gctx> {
     gctx: &'gctx GlobalContext,
     /// Keeps track of if we have sent a warning message if there was an error updating the cache.
     /// The motivation is to avoid warning spam if the cache is not writable.
-    has_warned: RefCell<bool>,
+    has_warned: Mutex<bool>,
 }
 
 impl<'gctx> CacheManager<'gctx> {
@@ -262,12 +261,12 @@ impl<'gctx> CacheManager<'gctx> {
         if let Err(e) = self.put_inner(cache_path, value) {
             tracing::info!(?cache_path, "failed to write cache: {e}");
 
-            if !*self.has_warned.borrow() {
+            if !*self.has_warned.lock().unwrap() {
                 let _ = self.gctx.shell().warn(format!(
                     "failed to write cache, path: {}, error: {e}",
                     cache_path.to_str().unwrap_or_default()
                 ));
-                *self.has_warned.borrow_mut() = true;
+                *self.has_warned.lock().unwrap() = true;
             }
         }
     }

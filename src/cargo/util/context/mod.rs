@@ -209,6 +209,8 @@ pub struct CredentialCacheValue {
 /// relating to cargo itself.
 #[derive(Debug)]
 pub struct GlobalContext {
+    /// I'm sorry.
+    pub gctx_arc: Option<Arc<Self>>,
     /// The location of the user's Cargo home directory. OS-dependent.
     home_path: Filesystem,
     /// Information about how to write messages to the shell
@@ -372,6 +374,7 @@ impl GlobalContext {
         };
 
         GlobalContext {
+            gctx_arc: None,
             home_path: Filesystem::new(homedir),
             shell: Mutex::new(shell),
             cwd,

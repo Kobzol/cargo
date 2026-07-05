@@ -6,6 +6,8 @@ use std::fmt;
 use std::hash;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::mpsc::RecvError;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::util::data_structures::{HashMap, HashSet};
@@ -28,6 +30,8 @@ use crate::core::{
     SourceId, Target,
 };
 use crate::core::{Summary, Workspace};
+use crate::ops;
+use crate::sources::registry::{WORKER_SENDER, WorkerMessage};
 use crate::sources::source::{MaybePackage, SourceMap};
 use crate::util::HumanBytes;
 use crate::util::cache_lock::{CacheLock, CacheLockMode};
@@ -41,7 +45,7 @@ use crate::util::{self, GlobalContext, Progress, ProgressStyle, internal};
 /// A package is a `Cargo.toml` file plus all the files that are part of it.
 #[derive(Clone)]
 pub struct Package {
-    inner: Rc<PackageInner>,
+    inner: Arc<PackageInner>,
 }
 
 #[derive(Clone)]
@@ -102,7 +106,7 @@ impl Package {
     /// Creates a package from a manifest and its location.
     pub fn new(manifest: Manifest, manifest_path: &Path) -> Package {
         Package {
-            inner: Rc::new(PackageInner {
+            inner: Arc::new(PackageInner {
                 manifest,
                 manifest_path: manifest_path.to_path_buf(),
             }),
@@ -119,7 +123,7 @@ impl Package {
     }
     /// Gets the manifest.
     pub fn manifest_mut(&mut self) -> &mut Manifest {
-        &mut Rc::make_mut(&mut self.inner).manifest
+        &mut Arc::make_mut(&mut self.inner).manifest
     }
     /// Gets the path to the manifest.
     pub fn manifest_path(&self) -> &Path {
@@ -185,7 +189,7 @@ impl Package {
 
     pub fn map_source(self, to_replace: SourceId, replace_with: SourceId) -> Package {
         Package {
-            inner: Rc::new(PackageInner {
+            inner: Arc::new(PackageInner {
                 manifest: self.manifest().clone().map_source(to_replace, replace_with),
                 manifest_path: self.manifest_path().to_owned(),
             }),
@@ -339,26 +343,29 @@ impl<'a, 'gctx> Downloads<'a, 'gctx> {
     }
 
     async fn run(&self, ids: impl IntoIterator<Item = PackageId>) -> CargoResult<Vec<&'a Package>> {
-        let mut futures: FuturesUnordered<_> =
-            ids.into_iter().map(|id| self.get_package(id)).collect();
-
-        // Wait for downloads to complete, or the timer to expire.
-        // This ensure that we call the tick function at a fast
-        // enough rate to give the user progress updates.
         let mut out = Vec::new();
-        loop {
-            futures::select! {
-                pkg = futures.try_next() => {
-                    match pkg? {
-                        Some(pkg) => out.push(pkg),
-                        None => break,
-                    }
-                },
-                _ = futures_timer::Delay::new(Duration::from_millis(200)).fuse() => {
-                    self.tick(WhyTick::DownloadUpdate)?;
-                },
+        {
+            let mut futures: FuturesUnordered<_> =
+                ids.into_iter().map(|id| self.get_package(id)).collect();
+
+            // Wait for downloads to complete, or the timer to expire.
+            // This ensure that we call the tick function at a fast
+            // enough rate to give the user progress updates.
+            loop {
+                futures::select! {
+                    pkg = futures.try_next() => {
+                        match pkg? {
+                            Some(pkg) => out.push(pkg),
+                            None => break,
+                        }
+                    },
+                    _ = futures_timer::Delay::new(Duration::from_millis(200)).fuse() => {
+                        self.tick(WhyTick::DownloadUpdate)?;
+                    },
+                }
             }
         }
+
         self.print_summary()?;
         self.set
             .gctx

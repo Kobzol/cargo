@@ -183,14 +183,6 @@
 //!
 
 use crate::util::data_structures::HashSet;
-use std::cell::RefCell;
-use std::fs;
-use std::fs::{File, OpenOptions};
-use std::io;
-use std::io::Read;
-use std::io::Write;
-use std::path::{Path, PathBuf};
-
 use anyhow::Context as _;
 use cargo_util::paths;
 use cargo_util_terminal::report::Level;
@@ -198,6 +190,16 @@ use flate2::read::GzDecoder;
 use futures::FutureExt as _;
 use serde::Deserialize;
 use serde::Serialize;
+use std::cell::RefCell;
+use std::fs;
+use std::fs::{File, OpenOptions};
+use std::io;
+use std::io::Read;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::sync::mpsc::TryRecvError;
+use std::time::{Duration, Instant};
 use tar::{Archive, EntryType};
 use tracing::debug;
 
@@ -261,7 +263,7 @@ pub struct RegistrySource<'gctx> {
     /// As of this writing, this is for not emitting the `--precise <yanked>`
     /// warning twice, with the assumption of (`dep.package_name()` + `--precise`
     /// version) being sufficient to uniquely identify the same query result.
-    selected_precise_yanked: RefCell<HashSet<(InternedString, semver::Version)>>,
+    selected_precise_yanked: Mutex<HashSet<(InternedString, semver::Version)>>,
 }
 
 /// Result from loading data from a registry.
@@ -400,7 +402,9 @@ pub enum MaybeLock {
 mod download;
 mod http_remote;
 pub(crate) mod index;
+use crate::ops;
 pub use index::IndexSummary;
+
 mod local;
 mod remote;
 
@@ -492,7 +496,7 @@ impl<'gctx> RegistrySource<'gctx> {
             source_id,
             index: index::RegistryIndex::new(source_id, ops.index_path(), gctx),
             ops,
-            selected_precise_yanked: RefCell::new(HashSet::default()),
+            selected_precise_yanked: Mutex::new(HashSet::default()),
         }
     }
 
@@ -650,7 +654,26 @@ impl<'gctx> RegistrySource<'gctx> {
             .unpack_package(package, path)
             .with_context(|| format!("failed to unpack package `{}`", package))?;
         let src = PathSource::new(&path, self.source_id, self.gctx);
-        src.load()?;
+
+        // let start = Instant::now();
+        {
+            let path = src.path().join("Cargo.toml");
+            let source_id = self.source_id.clone();
+
+            let (tx2, rx2) = futures::channel::oneshot::channel();
+            let gctx2: &'static GlobalContext = unsafe { &*(self.gctx as *const GlobalContext) };
+            WORKER_SENDER
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .send(WorkerMessage::Work(path, source_id, gctx2, tx2))
+                .unwrap();
+            let package = rx2.await.unwrap();
+            *src.package.lock().unwrap() = Some(package);
+        }
+        // eprintln!("Load: {}", start.elapsed().as_secs_f64());
+
         let mut pkg = match src.download(package).await? {
             MaybePackage::Ready(pkg) => pkg,
             MaybePackage::Download { .. } => unreachable!(),
@@ -796,7 +819,8 @@ impl<'gctx> Source for RegistrySource<'gctx> {
                 .expect("--precise <yanked-version> in use");
             if self
                 .selected_precise_yanked
-                .borrow_mut()
+                .lock()
+                .unwrap()
                 .insert((name, version.clone()))
             {
                 let mut shell = self.gctx.shell();
@@ -948,6 +972,18 @@ fn set_mask<R: Read>(tar: &mut Archive<R>) {
     #[cfg(unix)]
     tar.set_mask(crate::util::get_umask());
 }
+
+pub enum WorkerMessage {
+    End,
+    Work(
+        PathBuf,
+        SourceId,
+        &'static GlobalContext,
+        futures::channel::oneshot::Sender<Package>,
+    ),
+}
+
+pub static WORKER_SENDER: Mutex<Option<std::sync::mpsc::Sender<WorkerMessage>>> = Mutex::new(None);
 
 /// Unpack a tarball with zip bomb and overwrite protections.
 fn unpack(

@@ -1,9 +1,10 @@
-use std::path::Path;
-
 use crate::core::{EitherManifest, Package, SourceId};
 use crate::util::GlobalContext;
 use crate::util::errors::CargoResult;
 use crate::util::toml::read_manifest;
+use std::path::Path;
+use std::sync::Arc;
+use std::time::Instant;
 use tracing::trace;
 
 pub fn read_package(

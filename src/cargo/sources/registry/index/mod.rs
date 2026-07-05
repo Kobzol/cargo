@@ -40,6 +40,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::rc::Rc;
 use std::str;
+use std::sync::{Arc, Mutex};
 use tracing::info;
 
 mod cache;
@@ -77,9 +78,9 @@ pub struct RegistryIndex<'gctx> {
     /// hasn't been cached already, it uses [`RegistryData::load`] to access
     /// to JSON files from the index, and the creates the optimized on-disk
     /// summary cache.
-    summaries_cache: RefCell<HashMap<InternedString, Rc<Summaries>>>,
+    summaries_cache: Mutex<HashMap<InternedString, Arc<Summaries>>>,
     /// Requests that are currently running.
-    summaries_inflight: RefCell<HashMap<InternedString, Vec<oneshot::Sender<Rc<Summaries>>>>>,
+    summaries_inflight: Mutex<HashMap<InternedString, Vec<oneshot::Sender<Arc<Summaries>>>>>,
     /// [`GlobalContext`] reference for convenience.
     gctx: &'gctx GlobalContext,
     /// Manager of on-disk caches.
@@ -113,7 +114,7 @@ struct Summaries {
 
     /// All known versions of a crate, keyed from their `Version` to the
     /// possibly parsed or unparsed version of the full summary.
-    versions: Vec<(Version, RefCell<MaybeIndexSummary>)>,
+    versions: Vec<(Version, Mutex<MaybeIndexSummary>)>,
 }
 
 /// A lazily parsed [`IndexSummary`].
@@ -248,8 +249,8 @@ impl<'gctx> RegistryIndex<'gctx> {
         RegistryIndex {
             source_id,
             path: path.clone(),
-            summaries_cache: RefCell::new(HashMap::default()),
-            summaries_inflight: RefCell::new(HashMap::default()),
+            summaries_cache: Mutex::new(HashMap::default()),
+            summaries_inflight: Mutex::new(HashMap::default()),
             gctx,
             cache_manager: CacheManager::new(path.join(".cache"), gctx),
         }
@@ -304,7 +305,7 @@ impl<'gctx> RegistryIndex<'gctx> {
             name: InternedString,
             index: &'a RegistryIndex<'a>,
             req: &'a OptVersionReq,
-            summaries: Rc<Summaries>,
+            summaries: Arc<Summaries>,
             i: usize,
         }
 
@@ -315,7 +316,7 @@ impl<'gctx> RegistryIndex<'gctx> {
                 while let Some((v, summary)) = self.summaries.versions.get(self.i) {
                     self.i += 1;
                     if self.req.matches(v) {
-                        match summary.borrow_mut().parse(
+                        match summary.lock().unwrap().parse(
                             &self.summaries.raw_data,
                             self.index.source_id,
                             self.index.gctx.cli_unstable(),
@@ -359,16 +360,16 @@ impl<'gctx> RegistryIndex<'gctx> {
         &self,
         name: InternedString,
         load: &dyn RegistryData,
-    ) -> CargoResult<Rc<Summaries>> {
+    ) -> CargoResult<Arc<Summaries>> {
         // If we've previously loaded what versions are present for `name`, just
         // return that since our in-memory cache should still be valid.
-        if let Some(summaries) = self.summaries_cache.borrow().get(&name) {
-            return Ok(summaries.clone());
+        if let Some(summaries) = self.summaries_cache.lock().unwrap().get(&name).cloned() {
+            return Ok(summaries);
         }
 
         // Check if this request has already started. If so, return a oneshot that hands out the same data.
         let rx = {
-            let mut pending = self.summaries_inflight.borrow_mut();
+            let mut pending = self.summaries_inflight.lock().unwrap();
             if let Some(waiters) = pending.get_mut(&name) {
                 let (tx, rx) = oneshot::channel();
                 waiters.push(tx);
@@ -384,11 +385,17 @@ impl<'gctx> RegistryIndex<'gctx> {
         }
 
         let summaries = self.load_summaries_uncached(name, load).await;
-        let pending = self.summaries_inflight.borrow_mut().remove(&name).unwrap();
+        let pending = self
+            .summaries_inflight
+            .lock()
+            .unwrap()
+            .remove(&name)
+            .unwrap();
         if let Ok(summaries) = &summaries {
             // Insert into the cache
             self.summaries_cache
-                .borrow_mut()
+                .lock()
+                .unwrap()
                 .insert(name, summaries.clone());
 
             // Send the value to all waiting futures.
@@ -403,7 +410,7 @@ impl<'gctx> RegistryIndex<'gctx> {
         &self,
         name: InternedString,
         load: &dyn RegistryData,
-    ) -> CargoResult<Rc<Summaries>> {
+    ) -> CargoResult<Arc<Summaries>> {
         // Prepare the `RegistryData` which will lazily initialize internal data
         // structures.
         load.prepare()?;
@@ -419,12 +426,12 @@ impl<'gctx> RegistryIndex<'gctx> {
         )
         .await?
         .unwrap_or_default();
-        Ok(Rc::new(summaries))
+        Ok(Arc::new(summaries))
     }
 
     /// Clears the in-memory summaries cache.
     pub fn clear_summaries_cache(&self) {
-        self.summaries_cache.borrow_mut().clear();
+        self.summaries_cache.lock().unwrap().clear();
     }
 
     pub async fn query_inner(
@@ -600,7 +607,7 @@ impl Summaries {
                     };
                     let version = summary.package_id().version().clone();
                     cache.versions.push((version.clone(), line));
-                    ret.versions.push((version, RefCell::new(summary.into())));
+                    ret.versions.push((version, Mutex::new(summary.into())));
                 }
                 if let Some(index_version) = index_version {
                     tracing::trace!("caching index_version {}", index_version);
@@ -638,7 +645,7 @@ impl Summaries {
             let (start, end) = subslice_bounds(&contents, summary);
             versions.push((
                 version,
-                RefCell::new(MaybeIndexSummary::Unparsed { start, end }),
+                Mutex::new(MaybeIndexSummary::Unparsed { start, end }),
             ));
         }
         let ret = Summaries {

@@ -1,4 +1,6 @@
 use cargo::core::features;
+use cargo::ops;
+use cargo::sources::registry::{WORKER_SENDER, WorkerMessage};
 use cargo::util::network::http::http_handle;
 use cargo::util::network::http::needs_custom_http_transport;
 use cargo::util::{self, CargoResult, closest_msg, command_prelude};
@@ -10,6 +12,7 @@ use std::env;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 mod cli;
 mod commands;
@@ -26,6 +29,35 @@ fn main() {
             cargo::exit_with_error(e.into(), &mut shell)
         }
     };
+
+    let (tx, rx) = std::sync::mpsc::channel::<WorkerMessage>();
+    *WORKER_SENDER.lock().unwrap() = Some(tx);
+    let rx = Arc::new(Mutex::new(rx));
+
+    let mut threads = vec![];
+    let thread_count = std::env::var("CARGO_WORKER_THREADS")
+        .map(|v| v.parse::<u32>().unwrap())
+        .unwrap_or(4);
+    for _ in 0..thread_count {
+        let rx = rx.clone();
+        threads.push(std::thread::spawn(move || {
+            loop {
+                let rx_locked = rx.lock().unwrap();
+                let msg = match rx_locked.recv() {
+                    Ok(msg) => msg,
+                    Err(_) => break,
+                };
+                drop(rx_locked);
+                match msg {
+                    WorkerMessage::End => break,
+                    WorkerMessage::Work(path, source_id, gctx, response) => {
+                        let pkg = ops::read_package(&path, source_id, gctx).unwrap();
+                        response.send(pkg).unwrap();
+                    }
+                }
+            }
+        }));
+    }
 
     let nightly_features_allowed = matches!(&*features::channel(), "nightly" | "dev");
     if nightly_features_allowed {

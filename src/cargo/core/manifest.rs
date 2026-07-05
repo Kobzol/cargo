@@ -63,10 +63,10 @@ impl EitherManifest {
 #[derive(Clone, Debug)]
 pub struct Manifest {
     // alternate forms of manifests:
-    contents: Option<Rc<String>>,
+    contents: Option<Arc<String>>,
     document: Option<Arc<toml::Spanned<toml::de::DeTable<'static>>>>,
-    original_toml: Option<Rc<TomlManifest>>,
-    normalized_toml: Rc<TomlManifest>,
+    original_toml: Option<Arc<TomlManifest>>,
+    normalized_toml: Arc<TomlManifest>,
     summary: Summary,
 
     // this form of manifest:
@@ -497,10 +497,10 @@ compact_debug! {
 
 impl Manifest {
     pub fn new(
-        contents: Option<Rc<String>>,
+        contents: Option<Arc<String>>,
         document: Option<Arc<toml::Spanned<toml::de::DeTable<'static>>>>,
-        original_toml: Option<Rc<TomlManifest>>,
-        normalized_toml: Rc<TomlManifest>,
+        original_toml: Option<Arc<TomlManifest>>,
+        normalized_toml: Arc<TomlManifest>,
         summary: Summary,
 
         default_kind: Option<CompileKind>,

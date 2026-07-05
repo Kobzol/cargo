@@ -1835,10 +1835,10 @@ note: only a feature named `default` will be enabled by default"
     let default_run = normalized_package.default_run.clone();
     let metabuild = normalized_package.metabuild.clone().map(|sov| sov.0);
     let manifest = Manifest::new(
-        contents.map(Rc::new),
+        contents.map(Arc::new),
         document.map(Arc::new),
-        Some(Rc::new(original_toml)),
-        Rc::new(normalized_toml),
+        Some(Arc::new(original_toml)),
+        Arc::new(normalized_toml),
         summary,
         default_kind,
         forced_kind,
