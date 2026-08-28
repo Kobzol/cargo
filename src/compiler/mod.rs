@@ -1754,16 +1754,35 @@ fn add_dep_arg<'a, 'b: 'a>(
     map: &mut BTreeMap<&'a Unit, PathBuf>,
     build_runner: &'b BuildRunner<'b, '_>,
     unit: &'a Unit,
+    only_direct: &HashSet<Unit>,
 ) {
     for dep in build_runner.unit_deps(unit) {
         // Don't include build script out dir in the args to reduce rustc command bloat.
         if dep.unit.target.is_custom_build() {
             continue;
         }
+        // eprintln!(
+        //     "{}: {:?}, {:?}",
+        //     dep.unit.pkg.name(),
+        //     dep.unit.target.kind(),
+        //     build_runner.outputs(&dep.unit).unwrap()
+        // );
+        // if map.contains_key(&dep.unit) {
+        //     continue;
+        // }
+        // if !(root == "foo"
+        //     && (dep.unit.pkg.name() == "bar"
+        //         || dep.unit.pkg.name() == "mydylib"
+        //         || dep.unit.pkg.name() == "baz"))
+        // {
+        //     map.insert(&dep.unit, build_runner.files().deps_dir(&dep.unit));
+        // }
         if map.contains_key(&dep.unit) {
             continue;
         }
-        map.insert(&dep.unit, build_runner.files().deps_dir(&dep.unit));
+        if !only_direct.contains(&dep.unit) {
+            map.insert(&dep.unit, build_runner.files().deps_dir(&dep.unit));
+        }
 
         // Proc macros are statically linked, so when including a proc-macro dependency we can skip
         // adding it's dependencies. Note that we still do add them when we are compiling the
@@ -1771,7 +1790,7 @@ fn add_dep_arg<'a, 'b: 'a>(
         if dep.unit.target.proc_macro() {
             continue;
         }
-        add_dep_arg(map, build_runner, &dep.unit);
+        add_dep_arg(map, build_runner, &dep.unit, only_direct);
     }
 }
 
@@ -1811,8 +1830,51 @@ pub fn lib_search_paths(
     if build_runner.bcx.gctx.cli_unstable().build_dir_new_layout {
         let mut map = BTreeMap::new();
 
+        let direct_deps = build_runner
+            .unit_deps(unit)
+            .iter()
+            .map(|u| u.unit.clone())
+            .collect::<HashSet<_>>();
+
+        fn gather_deps(build_runner: &BuildRunner<'_, '_>, unit: &Unit, deps: &mut HashSet<Unit>) {
+            for dep in build_runner.unit_deps(unit) {
+                deps.insert(dep.unit.clone());
+                gather_deps(build_runner, &dep.unit, deps);
+            }
+        }
+        let mut indirect_deps = HashSet::default();
+        for dep in build_runner.unit_deps(unit) {
+            gather_deps(build_runner, &dep.unit, &mut indirect_deps);
+        }
+        // indirect_deps.retain(|u| !direct_deps.contains(u));
+
+        // let mut direct_deps = direct_deps
+        //     .into_iter()
+        //     .map(|u| u.pkg.name())
+        //     .collect::<Vec<_>>();
+        // direct_deps.sort();
+        // let mut indirect_deps = indirect_deps
+        //     .into_iter()
+        //     .map(|u| u.pkg.name())
+        //     .collect::<Vec<_>>();
+        // indirect_deps.sort();
+        // eprintln!(
+        //     "{}: direct={direct_deps:?}, indirect={indirect_deps:?}",
+        //     unit.pkg.name()
+        // );
+        let mut only_direct = direct_deps
+            .iter()
+            .filter(|u| !indirect_deps.contains(u))
+            .cloned()
+            .collect::<HashSet<_>>();
+        // only_direct.sort();
+        // let total = direct_deps.union(&indirect_deps).count();
+        // let only_direct = only_direct.len();
+
+        // eprintln!("Total={total}, only direct: {only_direct}");
+
         // Recursively add all dependency args to rustc process
-        add_dep_arg(&mut map, build_runner, unit);
+        add_dep_arg(&mut map, build_runner, unit, &only_direct);
 
         let paths = map.into_iter().map(|(_, path)| path).sorted_unstable();
 
